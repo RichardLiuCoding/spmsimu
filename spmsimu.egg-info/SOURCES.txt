@@ -1,0 +1,10 @@
+LICENSE
+README.md
+setup.py
+spmsimu/__init__.py
+spmsimu/simulator.py
+spmsimu.egg-info/PKG-INFO
+spmsimu.egg-info/SOURCES.txt
+spmsimu.egg-info/dependency_links.txt
+spmsimu.egg-info/requires.txt
+spmsimu.egg-info/top_level.txt

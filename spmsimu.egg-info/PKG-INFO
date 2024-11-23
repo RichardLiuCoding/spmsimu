@@ -1,0 +1,22 @@
+Metadata-Version: 2.1
+Name: spmsimu
+Version: 0.0.1
+Summary: SPM Simulator.
+Home-page: https://github.com/RichardLiuCoding/spmsimu
+Download-URL: https://github.com/RichardLiuCoding/spmsimu.git
+Author: ['Richard (Yu) Liu']
+License: MIT
+Keywords: SPM,Python,Simulator,Machine learning,User training
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Developers
+Classifier: Topic :: Software Development :: Build Tools
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+License-File: LICENSE
+Requires-Dist: numpy
+Requires-Dist: scipy
+Requires-Dist: matplotlib
+Requires-Dist: numba
+
+Python simulator for generating realistic scan images.
+It offers simulated scan images based on ground-truth patterns or user-input images taken into account of most scanning parameters.
