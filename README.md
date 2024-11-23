@@ -59,7 +59,7 @@ tip_ideal = generate_tip_kernel(kernel_size=50, wx=5, wy=5)
 ```Python
 tip_double = generate_doubletip_kernel(kernel_size=kernel_size, offset=offset,tip1=[wx1, wy1, amp1], tip2=[wx2, wy2, amp2])
 ```
-![image](https://github.com/user-attachments/assets/5a505872-1768-4d47-87c3-8c6fb3ca55be)
+![image](https://github.com/user-attachments/assets/e693fe2b-533b-424e-a896-caa955052baa)
 
 # Simulate realistic scans
 
