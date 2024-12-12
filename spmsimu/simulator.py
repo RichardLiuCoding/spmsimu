@@ -249,14 +249,47 @@ def scanning_tip_change(img, kernel1, pi1, kernel2=None, pi2=None):
 @njit
 def generate_phase(x, setpoint=0.5):
     return np.where(
-        x < setpoint,
+        x < np.sqrt(setpoint)/1.5 + 0.3,
         -np.arccos(x) * 50 + 90,
         np.where(x < 1, np.arccos(x) * 50 + 90, 90)
-    )
+        )
+
+    # return np.where(
+    #     x < setpoint,
+    #     -np.arccos(x) * 50 + 90,
+    #     np.where(x < 1, np.arccos(x) * 50 + 90, 90)
+    # )
+
+    
+@njit
+def generate_random_walk_2D(num_traces, N, step_size=0.1):
+    '''
+    Generate a 2D array of random walk traces.
+    
+    Input:
+        num_traces - int: the number of random walk traces to generate
+        N          - int: the length of each random walk trace
+        step_size  - float: the maximum step size (uniformly sampled between -step_size and step_size)
+
+    Output:
+        ndarray: a 2D array of shape (num_traces, N + 1), where each row is a random walk trace
+    '''
+    # Initialize the output array with zeros
+    positions = np.zeros((num_traces, N + 1))
+    
+    # Loop through each trace
+    for i in range(num_traces):
+        # Generate random steps
+        steps = np.random.uniform(-step_size, step_size, N)
+        # Compute cumulative sum manually
+        for j in range(N):
+            positions[i, j + 1] = positions[i, j] + steps[j]
+    
+    return positions[:,1:]
 
 @njit(parallel=True)
 def scan(image, kernel, drive=0.5, setpoint=0.2, P=1e0, I=1e-2, length=10, z_speed=0.1, scan_speed=1,
-         phase=False, retrace=False):
+         phase=False, retrace=False, noise=False):
     '''
     Generate realistic scan images based on the ground truth image, tip shape kernel, and scanning parameters.
     Input:
@@ -271,6 +304,7 @@ def scan(image, kernel, drive=0.5, setpoint=0.2, P=1e0, I=1e-2, length=10, z_spe
         scan_speed - float: the xy movement speed of the tip
         phase      - boolean: if true, a corresponding phase map is generated along with the height map
         retrace    - boolean: if true, both trace and retrace maps will be generated
+        noise      - boolean: if true, when the drive is too small and setpoint is too large, scans will be dominated by noise
 
     output:
         Realistic scan image generated based on ground truth image, tip shape kernel, and scanning parameters.
@@ -281,92 +315,101 @@ def scan(image, kernel, drive=0.5, setpoint=0.2, P=1e0, I=1e-2, length=10, z_spe
     # Output always has four channels -- z, phase, z_re, phase_re
     output = np.zeros((4, image_height, image_width))
 
-    pad_height = kernel_height // 2
-    pad_width = kernel_width // 2
+    if noise and (setpoint > (np.sqrt(drive))/5+0.8):
+        h0 = setpoint
+        ph0 = 95
+        output[0] = h0 + generate_random_walk_2D(image_height, image_width, step_size=0.1)
+        output[2] = h0 + generate_random_walk_2D(image_height, image_width, step_size=0.1)
+        output[1] = ph0 + generate_random_walk_2D(image_height, image_width, step_size=0.1)
+        output[3] = ph0 + generate_random_walk_2D(image_height, image_width, step_size=0.1)
+        return output
+    else:
+        pad_height = kernel_height // 2
+        pad_width = kernel_width // 2
 
-    # Pad the boundaries with -1
-    padded_image = pad_image(image, pad_height, pad_width)
+        # Pad the boundaries with -1
+        padded_image = pad_image(image, pad_height, pad_width)
 
-    z_groundtruth = np.zeros((image_height, image_width))
+        z_groundtruth = np.zeros((image_height, image_width))
 
-    # Generate the ground truth map with tip kernels
-    for i in prange(image_height):
-        for j in prange(image_width):
-            crop = padded_image[i:i + kernel_height, j:j + kernel_width]
-            z_groundtruth[i, j] = 1 - np.min(2 - kernel - crop)
+        # Generate the ground truth map with tip kernels
+        for i in prange(image_height):
+            for j in prange(image_width):
+                crop = padded_image[i:i + kernel_height, j:j + kernel_width]
+                z_groundtruth[i, j] = 1 - np.min(2 - kernel - crop)
 
-    z_cal = np.zeros_like(image)
-    z_measured = np.zeros_like(image)
-    delta_z_max = z_speed / scan_speed
+        z_cal = np.zeros_like(image)
+        z_measured = np.zeros_like(image)
+        delta_z_max = z_speed / scan_speed
 
-    # Initialize placeholder arrays
-    z_measured_re = np.zeros_like(image) if retrace else np.zeros((0, 0))
-    phase_map = np.zeros_like(image) if phase else np.zeros((0, 0))
-    phase_map_re = np.zeros_like(image) if (phase and retrace) else np.zeros((0, 0))
+        # Initialize placeholder arrays
+        z_measured_re = np.zeros_like(image) if retrace else np.zeros((0, 0))
+        phase_map = np.zeros_like(image) if phase else np.zeros((0, 0))
+        phase_map_re = np.zeros_like(image) if (phase and retrace) else np.zeros((0, 0))
 
-    # Initialize PID integral stack per scan line to avoid shared memory issues
-    # Here we take the buffer out of for loop to keep a memory on the previous scan lines
-    # integral = np.zeros(length)
-    
-    # for index in prange(len(z_groundtruth)):  # Parallel over scan lines
-    for index in prange(len(z_groundtruth)):  # Parallel over scan lines
+        # Initialize PID integral stack per scan line to avoid shared memory issues
+        # Here we take the buffer out of for loop to keep a memory on the previous scan lines
+        # integral = np.zeros(length)
         
-        # Start scanning from the beginning of each line
-        z_cal[index, 0] = z_groundtruth[index, 0] + setpoint
-        z_measured[index, 0] = z_groundtruth[index, 0] + setpoint
+        # for index in prange(len(z_groundtruth)):  # Parallel over scan lines
+        for index in prange(len(z_groundtruth)):  # Parallel over scan lines
+            
+            # Start scanning from the beginning of each line
+            z_cal[index, 0] = z_groundtruth[index, 0] + setpoint
+            z_measured[index, 0] = z_groundtruth[index, 0] + setpoint
 
-        integral = np.zeros(length)
-        
-        for i in range(len(z_groundtruth[index])-1):
-            z_diff_cal = z_measured[index, i] - z_groundtruth[index, i] - setpoint
-
-            # Update integral (shift left and add new value)
-            integral = np.roll(integral, -1)
-            integral[-1] = z_diff_cal
-
-            integral_sum = np.sum(integral)
-            distance_to_move = P * z_diff_cal + I * integral_sum
-
-            if np.abs(distance_to_move) > delta_z_max:
-                distance_to_move = np.sign(distance_to_move) * delta_z_max
-
-            z_measured[index, i+1] = z_measured[index, i] - distance_to_move
-
-    # Generate retrace map if requested
-    if retrace:
-        # integral = np.zeros(length)  
-        # for index in prange(len(z_groundtruth)):  # Parallel over scan lines for retrace
-        for index in prange(len(z_groundtruth)):  # Parallel over scan lines for retrace
-            # Initialize integral stack per scan line
             integral = np.zeros(length)
-
-            z_measured_re[index, 0] = z_groundtruth[index, -1] + setpoint
-
+            
             for i in range(len(z_groundtruth[index])-1):
-                z_diff_cal_re = z_measured_re[index, i] - z_groundtruth[index][::-1][i] - setpoint
+                z_diff_cal = z_measured[index, i] - z_groundtruth[index, i] - setpoint
 
                 # Update integral (shift left and add new value)
                 integral = np.roll(integral, -1)
-                integral[-1] = z_diff_cal_re
+                integral[-1] = z_diff_cal
 
                 integral_sum = np.sum(integral)
-                distance_to_move = P * z_diff_cal_re + I * integral_sum
+                distance_to_move = P * z_diff_cal + I * integral_sum
 
                 if np.abs(distance_to_move) > delta_z_max:
                     distance_to_move = np.sign(distance_to_move) * delta_z_max
 
-                z_measured_re[index, i+1] = z_measured_re[index, i] - distance_to_move
-                
-        output[2] = z_measured_re
-        
-    output[0] = z_measured
-    
-    # Generate phase map if requested
-    if phase:
-        phase_map = generate_phase(z_measured - z_groundtruth, drive)
-        output[1] = phase_map
+                z_measured[index, i+1] = z_measured[index, i] - distance_to_move
+
+        # Generate retrace map if requested
         if retrace:
-            phase_map_re = generate_phase(z_measured_re[:, ::-1] - z_groundtruth, drive)
-            output[3] = phase_map_re
-    
-    return output
+            # integral = np.zeros(length)  
+            # for index in prange(len(z_groundtruth)):  # Parallel over scan lines for retrace
+            for index in prange(len(z_groundtruth)):  # Parallel over scan lines for retrace
+                # Initialize integral stack per scan line
+                integral = np.zeros(length)
+
+                z_measured_re[index, 0] = z_groundtruth[index, -1] + setpoint
+
+                for i in range(len(z_groundtruth[index])-1):
+                    z_diff_cal_re = z_measured_re[index, i] - z_groundtruth[index][::-1][i] - setpoint
+
+                    # Update integral (shift left and add new value)
+                    integral = np.roll(integral, -1)
+                    integral[-1] = z_diff_cal_re
+
+                    integral_sum = np.sum(integral)
+                    distance_to_move = P * z_diff_cal_re + I * integral_sum
+
+                    if np.abs(distance_to_move) > delta_z_max:
+                        distance_to_move = np.sign(distance_to_move) * delta_z_max
+
+                    z_measured_re[index, i+1] = z_measured_re[index, i] - distance_to_move
+                    
+            output[2] = z_measured_re
+            
+        output[0] = z_measured
+        
+        # Generate phase map if requested
+        if phase:
+            phase_map = generate_phase(z_measured - z_groundtruth, drive)
+            output[1] = phase_map
+            if retrace:
+                phase_map_re = generate_phase(z_measured_re[:, ::-1] - z_groundtruth, drive)
+                output[3] = phase_map_re
+        
+        return output
