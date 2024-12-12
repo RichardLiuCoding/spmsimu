@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
   name = 'spmsimu',
-  version = '0.0.1',
+  version = '0.0.2',
   packages = find_packages(),
   license='MIT',
   description = 'SPM Simulator.',
